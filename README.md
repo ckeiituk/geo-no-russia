@@ -71,7 +71,7 @@ set -euo pipefail
 
 # Configuration
 REPO="ckeiituk/geo-no-russia"
-OUT_FILE="/opt/xray/geo-no-russia.dat"
+OUT_FILE="/opt/remnanode/geo-no-russia.dat"
 CONTAINER_NAME="xray"
 
 TMP_FILE="$OUT_FILE.tmp"
