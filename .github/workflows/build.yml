@@ -25,7 +25,27 @@ jobs:
           # Скачиваем чистый текстовый список доменов
           curl -fsSL https://raw.githubusercontent.com/dartraiden/no-russia-hosts/master/hosts.txt -o hosts-raw.txt
 
+      - name: Check if source changed
+        id: check_source
+        run: |
+          # Вычисляем хеш исходника
+          NEW_SOURCE_HASH=$(sha256sum hosts-raw.txt | awk '{print $1}')
+          echo "new_hash=$NEW_SOURCE_HASH" >> $GITHUB_OUTPUT
+          
+          # Получаем последний релиз и его описание
+          LAST_RELEASE=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases/latest)
+          OLD_SOURCE_HASH=$(echo "$LAST_RELEASE" | jq -r '.body' | grep -oP 'Source hash: \K[a-f0-9]+')
+          
+          if [ "$OLD_SOURCE_HASH" = "$NEW_SOURCE_HASH" ]; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+            echo "[=] Source unchanged ($NEW_SOURCE_HASH), skipping build"
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "[+] Source changed: $OLD_SOURCE_HASH -> $NEW_SOURCE_HASH"
+          fi
+
       - name: Build dlc-data/no-russia
+        if: steps.check_source.outputs.changed == 'true'
         run: |
           mkdir -p dlc-data
           
@@ -41,30 +61,38 @@ jobs:
           mv dlc-data/no-russia.tmp dlc-data/no-russia
 
       - name: Clone domain-list-community
+        if: steps.check_source.outputs.changed == 'true'
         run: git clone --depth=1 https://github.com/v2fly/domain-list-community.git
 
       - name: Build dat via Go
+        if: steps.check_source.outputs.changed == 'true'
         run: |
           cd domain-list-community
           go mod download
           go run ./ --datapath=../dlc-data
 
       - name: Prepare artifacts
+        if: steps.check_source.outputs.changed == 'true'
         run: |
           mv domain-list-community/dlc.dat geo-no-russia.dat
           sha256sum geo-no-russia.dat > geo-no-russia.dat.sha256
 
       - name: Generate version tag
+        if: steps.check_source.outputs.changed == 'true'
         id: version
         run: echo "tag=v$(date -u +%Y.%m.%d-%H%M)" >> "$GITHUB_OUTPUT"
 
       - name: Create release
+        if: steps.check_source.outputs.changed == 'true'
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           files: |
             geo-no-russia.dat
             geo-no-russia.dat.sha256
-          body: "Автосборка geo-no-russia.dat из dartraiden/no-russia-hosts"
+          body: |
+            Автосборка geo-no-russia.dat из dartraiden/no-russia-hosts
+            
+            Source hash: ${{ steps.check_source.outputs.new_hash }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
