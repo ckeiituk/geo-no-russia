@@ -20,7 +20,7 @@
 
 ```bash
 curl -L -o geo-no-russia.dat \
-  https://github.com/ckeiituk/geo-no-russia-clean/releases/latest/download/geo-no-russia.dat
+  https://github.com/ckeiituk/geo-no-russia/releases/latest/download/geo-no-russia.dat
 ```
 
 ### 2. Подключение в Xray
@@ -71,7 +71,7 @@ docker compose restart xray
 set -euo pipefail
 
 OUT_FILE="/opt/xray/geo-no-russia.dat"
-RELEASE_URL="https://github.com/ckeiituk/geo-no-russia-clean/releases/latest/download/geo-no-russia.dat"
+RELEASE_URL="https://github.com/ckeiituk/geo-no-russia/releases/latest/download/geo-no-russia.dat"
 COMPOSE_FILE="/opt/xray/docker-compose.yml"
 
 old_hash="$([ -f "$OUT_FILE" ] && sha256sum "$OUT_FILE" | awk '{print $1}' || echo NONE)"
