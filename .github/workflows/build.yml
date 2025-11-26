@@ -1,0 +1,70 @@
+name: Build geo-no-russia.dat
+
+on:
+  schedule:
+    - cron: '30 22 * * 6'  # Суббота 22:30 UTC ≈ ночь воскресенья в +05
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+
+      - name: Fetch source list
+        run: |
+          # Скачиваем чистый текстовый список доменов
+          curl -fsSL https://raw.githubusercontent.com/dartraiden/no-russia-hosts/master/hosts.txt -o hosts-raw.txt
+
+      - name: Build dlc-data/no-russia
+        run: |
+          mkdir -p dlc-data
+          
+          # Фильтруем комментарии и пустые строки, добавляем префикс domain: для каждого домена
+          grep -v '^#' hosts-raw.txt | grep -v '^$' | sed 's/^/domain:/' > dlc-data/no-russia
+          
+          # Добавляем заголовок
+          {
+            echo "# name: no-russia"
+            echo "# source: dartraiden/no-russia-hosts"
+            cat dlc-data/no-russia
+          } > dlc-data/no-russia.tmp
+          mv dlc-data/no-russia.tmp dlc-data/no-russia
+
+      - name: Clone domain-list-community
+        run: git clone --depth=1 https://github.com/v2fly/domain-list-community.git
+
+      - name: Build dat via Go
+        run: |
+          cd domain-list-community
+          go mod download
+          go run ./ --datapath=../dlc-data
+
+      - name: Prepare artifacts
+        run: |
+          mv domain-list-community/dlc.dat geo-no-russia.dat
+          sha256sum geo-no-russia.dat > geo-no-russia.dat.sha256
+
+      - name: Generate version tag
+        id: version
+        run: echo "tag=v$(date -u +%Y.%m.%d-%H%M)" >> "$GITHUB_OUTPUT"
+
+      - name: Create release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          files: |
+            geo-no-russia.dat
+            geo-no-russia.dat.sha256
+          body: "Автосборка geo-no-russia.dat из dartraiden/no-russia-hosts"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
