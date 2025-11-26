@@ -1,120 +1,151 @@
-# geo-no-russia
+# 🌐 geo-no-russia
 
-Автоматическая сборка `geo-no-russia.dat` для Xray/V2Ray из [dartraiden/no-russia-hosts](https://github.com/dartraiden/no-russia-hosts).
+[![Build Status](https://github.com/ckeiituk/geo-no-russia/actions/workflows/build.yml/badge.svg)](https://github.com/ckeiituk/geo-no-russia/actions)
+[![Latest Release](https://img.shields.io/github/v/release/ckeiituk/geo-no-russia)](https://github.com/ckeiituk/geo-no-russia/releases/latest)
+[![License](https://img.shields.io/github/license/ckeiituk/geo-no-russia)](LICENSE)
 
-## О проекте
+Автоматически обновляемый geosite-список доменов, ограничивающих доступ с российских IP-адресов. Предназначен для маршрутизации в Xray/V2Ray/Sing-box.
 
-Список доменов, владельцы которых ограничивают доступ с российских IP-адресов, скомпилированный в формат `.dat` для использования в Xray/V2Ray routing.
+Источник: [dartraiden/no-russia-hosts](https://github.com/dartraiden/no-russia-hosts)
 
-### Особенности
+## ✨ Особенности
 
-- ✅ Автоматическое обновление каждую субботу в 23:30 (по времени +05)
-- ✅ Релизы с SHA256 хэш-суммами для проверки целостности
-- ✅ Источник: проверенный список [dartraiden/no-russia-hosts](https://github.com/dartraiden/no-russia-hosts)
+- **Daily Updates**: Сборка запускается ежедневно в 01:30 MSK (22:30 UTC)
+- **Zero Downtime**: Скрипты обновления поддерживают graceful reload без разрыва соединений
+- **Integrity Check**: Каждый релиз включает SHA256-хеш для верификации целостности
+- **Optimized**: Файл очищен от комментариев и дублей, готов к использованию
 
-## Установка
+## 🚀 Быстрый старт
 
-### 1. Скачивание
-
-Скачайте последнюю версию:
+### Установка
 
 ```bash
-curl -L -o geo-no-russia.dat \
+curl -fsSL -o /usr/local/share/xray/geo-no-russia.dat \
   https://github.com/ckeiituk/geo-no-russia/releases/latest/download/geo-no-russia.dat
 ```
 
-### 2. Подключение в Xray
+### Docker Compose
 
-#### Docker Compose
-
-Добавьте в `docker-compose.yml`:
+Добавьте volume в `docker-compose.yml`:
 
 ```yaml
 services:
   xray:
+    image: ghcr.io/xtls/xray-core:latest
     volumes:
-      - './geo-no-russia.dat:/usr/local/share/xray/geo-no-russia.dat:ro'
+      - ./geo-no-russia.dat:/usr/local/share/xray/geo-no-russia.dat:ro
+      - ./config.json:/etc/xray/config.json
 ```
 
-#### Конфигурация routing в `config.json`
+### Конфигурация Xray
 
-Добавьте правило в `routing.rules`:
+Добавьте правило маршрутизации в `config.json`:
 
 ```json
 {
-  "type": "field",
-  "domain": [
-    "ext:geo-no-russia.dat:no-russia"
-  ],
-  "outboundTag": "proxy"
+  "routing": {
+    "rules": [
+      {
+        "type": "field",
+        "domain": [
+          "ext:geo-no-russia.dat:no-russia"
+        ],
+        "outboundTag": "proxy"
+      }
+    ]
+  }
 }
 ```
 
-Где `"proxy"` — имя вашего outbound с зарубежным proxy/VPN.
+Где `"proxy"` — имя вашего outbound для зарубежного трафика.
 
-### 3. Проверка
+## 🔄 Автообновление
 
-```bash
-# Проверка конфигурации
-docker exec xray xray -test -c /etc/xray/config.json
+### Скрипт с graceful reload
 
-# Перезапуск
-docker compose restart xray
-```
-
-## Автообновление (опционально)
-
-Создайте скрипт `/usr/local/bin/update-geo-no-russia.sh`:
+Создайте `/usr/local/bin/update-geo-no-russia.sh`:
 
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Configuration
+REPO="ckeiituk/geo-no-russia"
 OUT_FILE="/opt/xray/geo-no-russia.dat"
-RELEASE_URL="https://github.com/ckeiituk/geo-no-russia/releases/latest/download/geo-no-russia.dat"
-COMPOSE_FILE="/opt/xray/docker-compose.yml"
+CONTAINER_NAME="xray"
 
-old_hash="$([ -f "$OUT_FILE" ] && sha256sum "$OUT_FILE" | awk '{print $1}' || echo NONE)"
-curl -fsSL "$RELEASE_URL" -o "$OUT_FILE.tmp"
-new_hash="$(sha256sum "$OUT_FILE.tmp" | awk '{print $1}')"
+TMP_FILE="$OUT_FILE.tmp"
 
-if [ "$old_hash" = "$new_hash" ]; then
-  echo "[✓] No changes ($new_hash)"
-  rm "$OUT_FILE.tmp"
+# Dependencies check
+for cmd in curl jq docker sha256sum; do
+  command -v $cmd >/dev/null || { echo "[!] Missing: $cmd"; exit 1; }
+done
+
+# Fetch latest release URL
+RELEASE_URL=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
+  | jq -r '.assets[] | select(.name=="geo-no-russia.dat") | .browser_download_url')
+
+if [ -z "$RELEASE_URL" ] || [ "$RELEASE_URL" = "null" ]; then
+  echo "[!] Failed to fetch release URL"
+  exit 1
+fi
+
+# Download to temporary file
+curl -fsSL "$RELEASE_URL" -o "$TMP_FILE"
+
+# Compare hashes
+OLD_HASH="NONE"
+[ -f "$OUT_FILE" ] && OLD_HASH=$(sha256sum "$OUT_FILE" | awk '{print $1}')
+NEW_HASH=$(sha256sum "$TMP_FILE" | awk '{print $1}')
+
+if [ "$OLD_HASH" = "$NEW_HASH" ]; then
+  echo "[=] No changes ($NEW_HASH)"
+  rm -f "$TMP_FILE"
   exit 0
 fi
 
-mv "$OUT_FILE.tmp" "$OUT_FILE"
-echo "[✓] Updated: $new_hash"
-docker compose -f "$COMPOSE_FILE" restart xray
+# Update file
+mv -f "$TMP_FILE" "$OUT_FILE"
+echo "[+] Updated: $OLD_HASH -> $NEW_HASH"
+
+# Graceful reload (SIGHUP) — no connection drops
+if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+  echo "[*] Reloading $CONTAINER_NAME..."
+  docker exec "$CONTAINER_NAME" kill -HUP 1
+  echo "[✓] Reload complete"
+else
+  echo "[!] Container $CONTAINER_NAME not running"
+fi
 ```
 
-Выдайте права:
+Дайте права на выполнение:
 
 ```bash
-sudo chmod +x /usr/local/bin/update-geo-no-russia.sh
+chmod +x /usr/local/bin/update-geo-no-russia.sh
 ```
 
-### systemd timer
+### Systemd timer
+
+Создайте `/etc/systemd/system/geo-update.service`:
 
 ```ini
-# /etc/systemd/system/update-geo-no-russia.service
 [Unit]
-Description=Update geo-no-russia.dat
-After=network-online.target
+Description=Update geo-no-russia database
+After=network.target
 
 [Service]
 Type=oneshot
 ExecStart=/usr/local/bin/update-geo-no-russia.sh
 ```
 
+Создайте `/etc/systemd/system/geo-update.timer`:
+
 ```ini
-# /etc/systemd/system/update-geo-no-russia.timer
 [Unit]
-Description=Weekly update of geo-no-russia.dat
+Description=Daily update for geo-no-russia.dat
 
 [Timer]
-OnCalendar=Sun 04:00:00
+OnCalendar=*-*-* 04:00:00
 Persistent=true
 
 [Install]
@@ -124,15 +155,54 @@ WantedBy=timers.target
 Активируйте:
 
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now update-geo-no-russia.timer
+systemctl daemon-reload
+systemctl enable --now geo-update.timer
 ```
 
-## Лицензия
+### Проверка работы таймера
 
-MIT
+```bash
+# Статус таймера
+systemctl status geo-update.timer
 
-## Благодарности
+# Следующий запуск
+systemctl list-timers geo-update.timer
+
+# Ручной запуск
+systemctl start geo-update.service
+
+# Логи
+journalctl -u geo-update.service -n 50
+```
+
+## 🔍 Верификация файла
+
+Проверка SHA256-хеша:
+
+```bash
+cd /usr/local/share/xray
+curl -fsSL https://github.com/ckeiituk/geo-no-russia/releases/latest/download/geo-no-russia.dat.sha256 \
+  | sha256sum -c -
+```
+
+Ожидаемый вывод:
+```
+geo-no-russia.dat: OK
+```
+
+## 📊 Статистика
+
+Посмотреть количество доменов в базе:
+
+```bash
+strings geo-no-russia.dat | grep -c '^[a-z]'
+```
+
+## ⚖️ Лицензия
+
+MIT License. Исходные списки доменов принадлежат их авторам.
+
+## 🙏 Благодарности
 
 - [dartraiden/no-russia-hosts](https://github.com/dartraiden/no-russia-hosts) — источник списка доменов
-- [v2fly/domain-list-community](https://github.com/v2fly/domain-list-community) — инструмент сборки `.dat`
+- [v2fly/domain-list-community](https://github.com/v2fly/domain-list-community) — инструмент компиляции
