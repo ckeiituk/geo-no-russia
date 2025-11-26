@@ -2,7 +2,7 @@ name: Build geo-no-russia.dat
 
 on:
   schedule:
-    - cron: '30 22 * * 6'  # Суббота 22:30 UTC ≈ ночь воскресенья в +05
+    - cron: '30 22 * * *'  # Каждый день в 22:30 UTC ≈ 03:30 +05
   workflow_dispatch:
 
 jobs:
@@ -34,7 +34,7 @@ jobs:
           
           # Получаем последний релиз и его описание
           LAST_RELEASE=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases/latest)
-          OLD_SOURCE_HASH=$(echo "$LAST_RELEASE" | jq -r '.body' | grep -oP 'Source hash: \K[a-f0-9]+')
+          OLD_SOURCE_HASH=$(echo "$LAST_RELEASE" | jq -r '.body' | grep -oP 'Source hash: \K[a-f0-9]+' || echo "none")
           
           if [ "$OLD_SOURCE_HASH" = "$NEW_SOURCE_HASH" ]; then
             echo "changed=false" >> $GITHUB_OUTPUT
