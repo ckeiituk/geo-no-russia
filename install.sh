@@ -46,13 +46,13 @@ fi
 log_info "Конфигурация установки"
 echo
 
-read -p "Путь к geo-no-russia.dat [/opt/remnanode/geo-no-russia.dat]: " OUT_FILE
+read -p "Путь к geo-no-russia.dat [/opt/remnanode/geo-no-russia.dat]: " OUT_FILE </dev/tty
 OUT_FILE=${OUT_FILE:-/opt/remnanode/geo-no-russia.dat}
 
-read -p "Имя Docker контейнера Xray [remnanode]: " CONTAINER_NAME
+read -p "Имя Docker контейнера Xray [remnanode]: " CONTAINER_NAME </dev/tty
 CONTAINER_NAME=${CONTAINER_NAME:-remnanode}
 
-read -p "Время обновления (формат HH:MM) [04:00]: " UPDATE_TIME
+read -p "Время обновления (формат HH:MM) [04:00]: " UPDATE_TIME </dev/tty
 UPDATE_TIME=${UPDATE_TIME:-04:00}
 
 # Validate time format (HH:MM, 24h)
@@ -75,7 +75,7 @@ echo "  Контейнер: $CONTAINER_NAME"
 echo "  Время обновления: $UPDATE_TIME"
 echo
 
-read -p "Продолжить? [Y/n]: " CONFIRM
+read -p "Продолжить? [Y/n]: " CONFIRM </dev/tty
 CONFIRM=${CONFIRM:-Y}
 if [[ ! $CONFIRM =~ ^[Yy]$ ]]; then
   log_warn "Установка отменена"
