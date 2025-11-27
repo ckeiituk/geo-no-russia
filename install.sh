@@ -22,9 +22,9 @@ fi
 # Dependencies check
 log_info "Проверка зависимостей..."
 MISSING_DEPS=()
-for cmd in curl jq docker sha256sum systemctl; do
-  if ! command -v $cmd &>/dev/null; then
-    MISSING_DEPS+=($cmd)
+for cmd in curl jq sha256sum systemctl; do
+  if ! command -v "$cmd" &>/dev/null; then
+    MISSING_DEPS+=("$cmd")
   fi
 done
 
@@ -32,6 +32,14 @@ if [[ ${#MISSING_DEPS[@]} -gt 0 ]]; then
   log_error "Отсутствуют: ${MISSING_DEPS[*]}"
   log_info "Установите: apt install ${MISSING_DEPS[*]}"
   exit 1
+fi
+
+if ! command -v docker &>/dev/null; then
+  log_warn "docker не найден: автоперезагрузка контейнера работать не будет"
+fi
+
+if ! command -v strings &>/dev/null; then
+  log_warn "strings не найден: количество доменов после загрузки показано не будет"
 fi
 
 # Interactive configuration
@@ -47,9 +55,16 @@ CONTAINER_NAME=${CONTAINER_NAME:-remnanode}
 read -p "Время обновления (формат HH:MM) [04:00]: " UPDATE_TIME
 UPDATE_TIME=${UPDATE_TIME:-04:00}
 
-# Validate time format
-if ! [[ $UPDATE_TIME =~ ^[0-9]{2}:[0-9]{2}$ ]]; then
+# Validate time format (HH:MM, 24h)
+if ! [[ $UPDATE_TIME =~ ^([0-9]{2}):([0-9]{2})$ ]]; then
   log_error "Неверный формат времени. Используйте HH:MM"
+  exit 1
+fi
+
+HOUR=${BASH_REMATCH[1]}
+MINUTE=${BASH_REMATCH[2]}
+if ((10#$HOUR > 23 || 10#$MINUTE > 59)); then
+  log_error "Неверное время. Часы 00-23, минуты 00-59"
   exit 1
 fi
 
@@ -78,8 +93,12 @@ fi
 log_info "Загрузка geo-no-russia.dat..."
 DOWNLOAD_URL="https://github.com/ckeiituk/geo-no-russia/releases/latest/download/geo-no-russia.dat"
 if curl -fsSL "$DOWNLOAD_URL" -o "$OUT_FILE"; then
-  DOMAINS=$(strings "$OUT_FILE" | grep -c '^[a-z]' || echo "unknown")
-  log_success "Файл загружен ($DOMAINS доменов)"
+  if command -v strings &>/dev/null; then
+    DOMAINS=$(strings "$OUT_FILE" | grep -c '^[a-z]' || echo "unknown")
+    log_success "Файл загружен ($DOMAINS доменов)"
+  else
+    log_success "Файл загружен"
+  fi
 else
   log_error "Не удалось загрузить файл"
   exit 1
@@ -87,18 +106,27 @@ fi
 
 # Create update script
 log_info "Создание скрипта обновления..."
+ESCAPED_OUT_FILE=$(printf '%q' "$OUT_FILE")
+ESCAPED_CONTAINER_NAME=$(printf '%q' "$CONTAINER_NAME")
 cat > /usr/local/bin/update-geo-no-russia.sh <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 
 REPO="ckeiituk/geo-no-russia"
-OUT_FILE="$OUT_FILE"
-CONTAINER_NAME="$CONTAINER_NAME"
+OUT_FILE=$ESCAPED_OUT_FILE
+CONTAINER_NAME=$ESCAPED_CONTAINER_NAME
 TMP_FILE="\$OUT_FILE.tmp"
 
-for cmd in curl jq docker sha256sum; do
-  command -v \$cmd &>/dev/null || { echo "[!] Missing: \$cmd"; exit 1; }
+BASE_DEPS=(curl jq sha256sum)
+for cmd in "\${BASE_DEPS[@]}"; do
+  command -v "\$cmd" &>/dev/null || { echo "[!] Missing: \$cmd"; exit 1; }
 done
+
+HAS_DOCKER=1
+if ! command -v docker &>/dev/null; then
+  HAS_DOCKER=0
+  echo "[!] docker not found; skipping container reload"
+fi
 
 RELEASE_URL=\$(curl -fsSL "https://api.github.com/repos/\$REPO/releases/latest" \\
   | jq -r '.assets[] | select(.name=="geo-no-russia.dat") | .browser_download_url')
@@ -119,16 +147,19 @@ if [[ "\$OLD_HASH" == "\$NEW_HASH" ]]; then
   rm -f "\$TMP_FILE"
   exit 0
 fi
-
 mv -f "\$TMP_FILE" "\$OUT_FILE"
 echo "[+] Updated: \$OLD_HASH -> \$NEW_HASH"
 
-if docker ps --format '{{.Names}}' | grep -q "^\${CONTAINER_NAME}\$"; then
-  echo "[*] Reloading \$CONTAINER_NAME..."
-  docker exec "\$CONTAINER_NAME" kill -HUP 1
-  echo "[✓] Reload complete"
+if [[ \$HAS_DOCKER -eq 1 ]]; then
+  if docker ps --format '{{.Names}}' | grep -Fxq "\$CONTAINER_NAME"; then
+    echo "[*] Reloading \$CONTAINER_NAME..."
+    docker exec "\$CONTAINER_NAME" kill -HUP 1
+    echo "[✓] Reload complete"
+  else
+    echo "[!] Container \$CONTAINER_NAME not running"
+  fi
 else
-  echo "[!] Container \$CONTAINER_NAME not running"
+  echo "[*] Skipping container reload (docker not installed)"
 fi
 EOF
 
