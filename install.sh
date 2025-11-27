@@ -38,11 +38,11 @@ fi
 log_info "Конфигурация установки"
 echo
 
-read -p "Путь к geo-no-russia.dat [/usr/local/share/xray/geo-no-russia.dat]: " OUT_FILE
-OUT_FILE=${OUT_FILE:-/usr/local/share/xray/geo-no-russia.dat}
+read -p "Путь к geo-no-russia.dat [/opt/remnanode/geo-no-russia.dat]: " OUT_FILE
+OUT_FILE=${OUT_FILE:-/opt/remnanode/geo-no-russia.dat}
 
-read -p "Имя Docker контейнера Xray [xray]: " CONTAINER_NAME
-CONTAINER_NAME=${CONTAINER_NAME:-xray}
+read -p "Имя Docker контейнера Xray [remnanode]: " CONTAINER_NAME
+CONTAINER_NAME=${CONTAINER_NAME:-remnanode}
 
 read -p "Время обновления (формат HH:MM) [04:00]: " UPDATE_TIME
 UPDATE_TIME=${UPDATE_TIME:-04:00}
