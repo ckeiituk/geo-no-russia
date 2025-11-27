@@ -170,6 +170,13 @@ log_success "Скрипт создан: /usr/local/bin/update-geo-no-russia.sh"
 
 # Create systemd service
 log_info "Настройка systemd service..."
+RELOAD_ENV_LINE=""
+if command -v docker &>/dev/null; then
+  RELOAD_ENV_LINE="Environment=\"GEO_NR_RELOAD_CMD=docker restart $CONTAINER_NAME\""
+  log_info "Автоперезапуск контейнера: docker restart $CONTAINER_NAME"
+else
+  log_warn "docker не найден: автоперезапуск контейнера недоступен (можно настроить GEO_NR_RELOAD_CMD вручную в geo-update.service)"
+fi
 cat > /etc/systemd/system/geo-update.service <<EOF
 [Unit]
 Description=Update geo-no-russia database
@@ -178,6 +185,7 @@ After=network.target
 [Service]
 Type=oneshot
 ExecStart=/usr/local/bin/update-geo-no-russia.sh
+$RELOAD_ENV_LINE
 StandardOutput=journal
 StandardError=journal
 EOF
