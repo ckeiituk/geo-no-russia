@@ -66,10 +66,9 @@ curl -fsSL https://raw.githubusercontent.com/ckeiituk/geo-no-russia/main/install
   - обращается к GitHub API (`ckeiituk/geo-no-russia`) и находит URL последнего релиза `geo-no-russia.dat`;
   - скачивает файл во временный `*.tmp`;
   - сравнивает SHA‑256 старой и новой версий;
-  - только при изменении хэша атомарно заменяет файл;
-  - при наличии Docker и запущенного контейнера с указанным именем отправляет в него `SIGHUP` (через `docker exec ... kill -HUP 1`), чтобы Xray перечитал конфиг без остановки.
+  - только при изменении хэша атомарно заменяет файл.
 
-Благодаря проверке хэшей контейнер не перезапускается без необходимости.
+Сам скрипт **не перезапускает автоматически** Xray/RemnaNode — это поведение сильно зависит от окружения. Для автоматического перезапуска можно задать собственную команду через переменную окружения `GEO_NR_RELOAD_CMD` (см. ниже).
 
 ---
 
@@ -98,6 +97,47 @@ curl -fsSL https://raw.githubusercontent.com/ckeiituk/geo-no-russia/main/install
   ```bash
   journalctl -u geo-update.service -n 50
   ```
+
+---
+
+## Автоматический перезапуск RemnaNode/Xray (опционально)
+
+По умолчанию `update-geo-no-russia.sh` только обновляет файл `geo-no-russia.dat`.  
+Если вы хотите, чтобы после каждого обновления автоматически выполнялся перезапуск узла, можно задать команду в переменной окружения `GEO_NR_RELOAD_CMD`.
+
+Примеры команд:
+
+- Быстрый перезапуск контейнера:
+
+  ```bash
+  GEO_NR_RELOAD_CMD="docker restart remnanode"
+  ```
+
+- Перезапуск через `docker compose` в каталоге узла:
+
+  ```bash
+  GEO_NR_RELOAD_CMD="cd /opt/remnanode && docker compose restart"
+  ```
+
+Чтобы привязать это к systemd‑сервису, можно отредактировать `geo-update.service`:
+
+```ini
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/update-geo-no-russia.sh
+Environment="GEO_NR_RELOAD_CMD=cd /opt/remnanode && docker compose restart"
+StandardOutput=journal
+StandardError=journal
+```
+
+После изменения не забудьте:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart geo-update.timer
+```
+
+Если `GEO_NR_RELOAD_CMD` не задана, обновление ограничивается только файлом `geo-no-russia.dat`, нода не перезапускается.
 
 ---
 
@@ -194,4 +234,3 @@ sudo systemctl daemon-reload
 - по возможности приложите лог (`journalctl -u geo-update.service`) и описание окружения (дистрибутив, версия Docker/Xray и т.д.).
 
 Это поможет быстрее воспроизвести и исправить проблему.
-

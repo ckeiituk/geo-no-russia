@@ -34,10 +34,6 @@ if [[ ${#MISSING_DEPS[@]} -gt 0 ]]; then
   exit 1
 fi
 
-if ! command -v docker &>/dev/null; then
-  log_warn "docker не найден: автоперезагрузка контейнера работать не будет"
-fi
-
 if ! command -v strings &>/dev/null; then
   log_warn "strings не найден: количество доменов после загрузки показано не будет"
 fi
@@ -136,12 +132,6 @@ for cmd in "\${BASE_DEPS[@]}"; do
   command -v "\$cmd" &>/dev/null || { echo "[!] Missing: \$cmd"; exit 1; }
 done
 
-HAS_DOCKER=1
-if ! command -v docker &>/dev/null; then
-  HAS_DOCKER=0
-  echo "[!] docker not found; skipping container reload"
-fi
-
 RELEASE_URL=\$(curl -fsSL "https://api.github.com/repos/\$REPO/releases/latest" \\
   | jq -r '.assets[] | select(.name=="geo-no-russia.dat") | .browser_download_url')
 
@@ -164,16 +154,14 @@ fi
 mv -f "\$TMP_FILE" "\$OUT_FILE"
 echo "[+] Updated: \$OLD_HASH -> \$NEW_HASH"
 
-if [[ \$HAS_DOCKER -eq 1 ]]; then
-  if docker ps --format '{{.Names}}' | grep -Fxq "\$CONTAINER_NAME"; then
-    echo "[*] Reloading \$CONTAINER_NAME..."
-    docker exec "\$CONTAINER_NAME" kill -HUP 1
-    echo "[✓] Reload complete"
+RELOAD_CMD="\${GEO_NR_RELOAD_CMD:-}"
+if [[ -n "\$RELOAD_CMD" ]]; then
+  echo "[*] Running reload command..."
+  if bash -lc "\$RELOAD_CMD"; then
+    echo "[✓] Reload command succeeded"
   else
-    echo "[!] Container \$CONTAINER_NAME not running"
+    echo "[!] Reload command failed"
   fi
-else
-  echo "[*] Skipping container reload (docker not installed)"
 fi
 EOF
 
