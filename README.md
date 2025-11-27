@@ -17,7 +17,7 @@
 - Установленные пакеты:
   - обязательные: `curl`, `jq`, `sha256sum`, `systemctl`;
   - опциональные:
-    - `docker` — для автоматического graceful‑reload контейнера Xray;
+    - `docker` — для автоматического перезапуска контейнера (через `docker restart`);
     - `strings` — только для отображения количества доменов после загрузки.
 
 Пример установки зависимостей для Debian/Ubuntu:
@@ -68,7 +68,9 @@ curl -fsSL https://raw.githubusercontent.com/ckeiituk/geo-no-russia/main/install
   - сравнивает SHA‑256 старой и новой версий;
   - только при изменении хэша атомарно заменяет файл.
 
-Сам скрипт **не перезапускает автоматически** Xray/RemnaNode — это поведение сильно зависит от окружения. Для автоматического перезапуска можно задать собственную команду через переменную окружения `GEO_NR_RELOAD_CMD` (см. ниже).
+Поведение после обновления:
+- если в системе есть `docker`, установщик по умолчанию настраивает автоперезапуск контейнера через `docker restart <имя-контейнера>` (переменная окружения `GEO_NR_RELOAD_CMD` в `geo-update.service`);
+- если `docker` отсутствует — выполняется только обновление файла, без перезапуска. При необходимости перезапуск можно настроить вручную через `GEO_NR_RELOAD_CMD` (см. ниже).
 
 ---
 
@@ -102,10 +104,14 @@ curl -fsSL https://raw.githubusercontent.com/ckeiituk/geo-no-russia/main/install
 
 ## Автоматический перезапуск RemnaNode/Xray (опционально)
 
-По умолчанию `update-geo-no-russia.sh` только обновляет файл `geo-no-russia.dat`.  
-Если вы хотите, чтобы после каждого обновления автоматически выполнялся перезапуск узла, можно задать команду в переменной окружения `GEO_NR_RELOAD_CMD`.
+`update-geo-no-russia.sh` поддерживает хук перезапуска через переменную окружения `GEO_NR_RELOAD_CMD`.  
+Установщик:
+- автоматически добавляет в `geo-update.service` строку `Environment="GEO_NR_RELOAD_CMD=docker restart <имя-контейнера>"`, если найден `docker`;
+- ничего не добавляет, если Docker не установлен — в этом случае обновление не трогает ноду.
 
-Примеры команд:
+Вы можете заменить команду перезапуска на свою.
+
+Примеры значений `GEO_NR_RELOAD_CMD`:
 
 - Быстрый перезапуск контейнера:
 
@@ -202,18 +208,17 @@ sudo ./install.sh
 
 ## Удаление
 
-Чтобы полностью удалить авт обновление:
+Чтобы полностью удалить авт обновление (таймер, сервис и скрипт), можно использовать встроенный скрипт:
 
 ```bash
-sudo systemctl stop geo-update.timer geo-update.service || true
-sudo systemctl disable geo-update.timer || true
-sudo rm -f /etc/systemd/system/geo-update.timer
-sudo rm -f /etc/systemd/system/geo-update.service
-sudo rm -f /usr/local/bin/update-geo-no-russia.sh
-sudo systemctl daemon-reload
+curl -fsSL https://raw.githubusercontent.com/ckeiituk/geo-no-russia/main/uninstall.sh | sudo bash
 ```
 
-Файл `geo-no-russia.dat` можно удалить вручную, если он больше не нужен.
+Скрипт:
+- остановит и отключит `geo-update.timer` / `geo-update.service`;
+- удалит `/etc/systemd/system/geo-update.timer` и `/etc/systemd/system/geo-update.service`;
+- удалит `/usr/local/bin/update-geo-no-russia.sh`;
+- при наличии `geo-no-russia.dat` предложит удалить и его (по умолчанию оставляет).
 
 ---
 

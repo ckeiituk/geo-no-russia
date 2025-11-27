@@ -29,6 +29,11 @@ if [[ -f /usr/local/bin/update-geo-no-russia.sh ]]; then
   fi
 fi
 
+# Fallback to стандартного пути, если скрипт обновления уже удалён
+if [[ -z "${OUT_FILE_PATH:-}" && -f /opt/remnanode/geo-no-russia.dat ]]; then
+  OUT_FILE_PATH="/opt/remnanode/geo-no-russia.dat"
+fi
+
 log_info "Остановка таймера и сервиса (если запущены)..."
 systemctl stop geo-update.timer geo-update.service 2>/dev/null || true
 
@@ -64,4 +69,3 @@ echo
 echo -e "${BLUE}Проверьте состояние (опционально):${NC}"
 echo "  systemctl list-timers | grep geo-update || true"
 echo "  systemctl status geo-update.service || true"
-
