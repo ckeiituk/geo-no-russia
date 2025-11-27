@@ -46,13 +46,25 @@ fi
 log_info "Конфигурация установки"
 echo
 
-read -p "Путь к geo-no-russia.dat [/opt/remnanode/geo-no-russia.dat]: " OUT_FILE </dev/tty
+# Сбрасываем возможные значения из окружения
+OUT_FILE=""
+CONTAINER_NAME=""
+UPDATE_TIME=""
+CONFIRM=""
+
+if ! read -p "Путь к geo-no-russia.dat [/opt/remnanode/geo-no-russia.dat]: " OUT_FILE </dev/tty; then
+  OUT_FILE=""
+fi
 OUT_FILE=${OUT_FILE:-/opt/remnanode/geo-no-russia.dat}
 
-read -p "Имя Docker контейнера Xray [remnanode]: " CONTAINER_NAME </dev/tty
+if ! read -p "Имя Docker контейнера Xray [remnanode]: " CONTAINER_NAME </dev/tty; then
+  CONTAINER_NAME=""
+fi
 CONTAINER_NAME=${CONTAINER_NAME:-remnanode}
 
-read -p "Время обновления (формат HH:MM) [04:00]: " UPDATE_TIME </dev/tty
+if ! read -p "Время обновления (формат HH:MM) [04:00]: " UPDATE_TIME </dev/tty; then
+  UPDATE_TIME=""
+fi
 UPDATE_TIME=${UPDATE_TIME:-04:00}
 
 # Validate time format (HH:MM, 24h)
@@ -75,7 +87,9 @@ echo "  Контейнер: $CONTAINER_NAME"
 echo "  Время обновления: $UPDATE_TIME"
 echo
 
-read -p "Продолжить? [Y/n]: " CONFIRM </dev/tty
+if ! read -p "Продолжить? [Y/n]: " CONFIRM </dev/tty; then
+  CONFIRM=""
+fi
 CONFIRM=${CONFIRM:-Y}
 if [[ ! $CONFIRM =~ ^[Yy]$ ]]; then
   log_warn "Установка отменена"
