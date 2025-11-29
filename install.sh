@@ -13,6 +13,24 @@ log_success() { echo -e "${GREEN}[✓]${NC} $1"; }
 log_warn() { echo -e "${YELLOW}[!]${NC} $1"; }
 log_error() { echo -e "${RED}[✗]${NC} $1"; }
 
+run_compose_up_service() {
+  local compose_file="$1"
+  local service_name="$2"
+  local compose_dir
+  compose_dir=$(dirname "$compose_file")
+
+  local compose_cmd=(docker compose)
+  if ! docker compose version &>/dev/null; then
+    if command -v docker-compose &>/dev/null; then
+      compose_cmd=(docker-compose)
+    else
+      return 1
+    fi
+  fi
+
+  (cd "$compose_dir" && "${compose_cmd[@]}" -f "$compose_file" up -d "$service_name")
+}
+
 ensure_compose_volume() {
   local compose_path="$1"
   local service_name="$2"
@@ -507,15 +525,37 @@ if [[ -n "$DOCKER_COMPOSE_PATH" ]]; then
 fi
 
 if [[ $RESTART_AFTER_INSTALL == "1" ]]; then
-  if command -v docker &>/dev/null; then
-    log_info "Перезапуск контейнера $CONTAINER_NAME..."
-    if docker restart "$CONTAINER_NAME"; then
-      log_success "Контейнер перезапущен"
+  if [[ -n "$DOCKER_COMPOSE_PATH" ]]; then
+    log_info "Пересоздание сервиса $DOCKER_COMPOSE_SERVICE через docker compose..."
+    if run_compose_up_service "$DOCKER_COMPOSE_PATH" "$DOCKER_COMPOSE_SERVICE"; then
+      log_success "docker compose up -d выполнен"
     else
-      log_warn "Не удалось перезапустить контейнер $CONTAINER_NAME"
+      log_warn "Не удалось выполнить docker compose up -d, пробую docker restart"
+      if command -v docker &>/dev/null; then
+        if docker restart "$CONTAINER_NAME"; then
+          log_success "Контейнер перезапущен"
+        else
+          log_warn "Не удалось перезапустить контейнер $CONTAINER_NAME"
+        fi
+      else
+        log_warn "docker не найден, пропускаю перезапуск контейнера"
+      fi
     fi
   else
-    log_warn "docker не найден, пропускаю перезапуск контейнера"
+    if command -v docker &>/dev/null; then
+      log_info "Перезапуск контейнера $CONTAINER_NAME..."
+      if docker restart "$CONTAINER_NAME"; then
+        log_success "Контейнер перезапущен"
+      else
+        log_warn "Не удалось перезапустить контейнер $CONTAINER_NAME"
+      fi
+    else
+      log_warn "docker не найден, пропускаю перезапуск контейнера"
+    fi
+  fi
+else
+  if [[ -n "$DOCKER_COMPOSE_PATH" ]]; then
+    log_warn "Тома в docker-compose обновлены, запустите 'docker compose up -d $DOCKER_COMPOSE_SERVICE' вручную, если ещё не сделали"
   fi
 fi
 
