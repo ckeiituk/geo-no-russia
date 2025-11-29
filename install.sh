@@ -215,6 +215,7 @@ DOCKER_COMPOSE_PATH=""
 DOCKER_COMPOSE_SERVICE=""
 GEO_CONTAINER_PATH=""
 ALLOW_CONTAINER_PATH=""
+RESTART_AFTER_INSTALL="0"
 CONFIRM=""
 
 if ! read -p "Путь к geo-no-russia.dat [/opt/remnanode/geo-no-russia.dat]: " OUT_FILE </dev/tty; then
@@ -249,6 +250,24 @@ MINUTE=${BASH_REMATCH[2]}
 if ((10#$HOUR > 23 || 10#$MINUTE > 59)); then
   log_error "Неверное время. Часы 00-23, минуты 00-59"
   exit 1
+fi
+
+RESTART_PROMPT="y/N"
+RESTART_DEFAULT="n"
+if command -v docker &>/dev/null; then
+  RESTART_PROMPT="Y/n"
+  RESTART_DEFAULT="Y"
+fi
+
+RESTART_ANSWER=""
+if ! read -p "Перезапустить контейнер после установки? [$RESTART_PROMPT]: " RESTART_ANSWER </dev/tty; then
+  RESTART_ANSWER=""
+fi
+RESTART_ANSWER=${RESTART_ANSWER:-$RESTART_DEFAULT}
+if [[ $RESTART_ANSWER =~ ^[Yy]$ ]]; then
+  RESTART_AFTER_INSTALL="1"
+else
+  RESTART_AFTER_INSTALL="0"
 fi
 
 DEFAULT_COMPOSE_PATH="$(dirname "$OUT_FILE")/docker-compose.yml"
@@ -301,6 +320,11 @@ echo "  Контейнер: $CONTAINER_NAME"
 echo "  Время обновления: $UPDATE_TIME"
 if [[ -n "$DOCKER_COMPOSE_PATH" ]]; then
   echo "  docker-compose: $DOCKER_COMPOSE_PATH (service: $DOCKER_COMPOSE_SERVICE)"
+fi
+if [[ $RESTART_AFTER_INSTALL == "1" ]]; then
+  echo "  Перезапуск контейнера после установки: Да"
+else
+  echo "  Перезапуск контейнера после установки: Нет"
 fi
 echo
 
@@ -480,6 +504,19 @@ if [[ -n "$DOCKER_COMPOSE_PATH" ]]; then
   log_info "Проверка docker-compose volumes..."
   ensure_compose_volume "$DOCKER_COMPOSE_PATH" "$DOCKER_COMPOSE_SERVICE" "$OUT_FILE" "$GEO_CONTAINER_PATH" "geo-no-russia"
   ensure_compose_volume "$DOCKER_COMPOSE_PATH" "$DOCKER_COMPOSE_SERVICE" "$ALLOW_FILE" "$ALLOW_CONTAINER_PATH" "allow-domains"
+fi
+
+if [[ $RESTART_AFTER_INSTALL == "1" ]]; then
+  if command -v docker &>/dev/null; then
+    log_info "Перезапуск контейнера $CONTAINER_NAME..."
+    if docker restart "$CONTAINER_NAME"; then
+      log_success "Контейнер перезапущен"
+    else
+      log_warn "Не удалось перезапустить контейнер $CONTAINER_NAME"
+    fi
+  else
+    log_warn "docker не найден, пропускаю перезапуск контейнера"
+  fi
 fi
 
 # Show status
