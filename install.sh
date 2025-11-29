@@ -508,6 +508,12 @@ echo
 ALLOW_BASENAME=$(basename "$ALLOW_FILE")
 echo "  Дополнительный geosite (allow-domains): $ALLOW_FILE"
 echo "  Пример правила: \"domain\": [\"ext:${ALLOW_BASENAME}:ANIME\"]"
+if command -v strings &>/dev/null; then
+  echo "  Доступные группы (country_code) в allow-domains (top 40):"
+  strings "$ALLOW_FILE" | grep -E '^[A-Z0-9_-]{2,32}$' | sort -u | head -n 40 | sed 's/^/    - /'
+else
+  echo "  (для вывода списка групп установите пакет binutils: команда strings)"
+fi
 echo
 
 # Show next run time
