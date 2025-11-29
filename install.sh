@@ -174,7 +174,7 @@ download_and_update() {
 
   local release_url
   release_url=\$(curl -fsSL "https://api.github.com/repos/\${repo}/releases/latest" \\
-    | jq -r --arg NAME "\$asset_name" '.assets[] | select(.name==$NAME) | .browser_download_url')
+    | jq -r --arg NAME "\$asset_name" '.assets[] | select(.name==\$NAME) | .browser_download_url')
 
   if [[ -z "\$release_url" || "\$release_url" == "null" ]]; then
     echo "[!] \${label}: failed to fetch release URL"
