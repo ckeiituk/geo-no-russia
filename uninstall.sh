@@ -22,16 +22,24 @@ log_info "Удаление geo-no-russia updater (systemd и скрипты)"
 
 # Try to detect data file path from update script
 OUT_FILE_PATH=""
+ALLOW_FILE_PATH=""
 if [[ -f /usr/local/bin/update-geo-no-russia.sh ]]; then
   OUT_FILE_LINE=$(grep -E '^OUT_FILE=' /usr/local/bin/update-geo-no-russia.sh | head -n1 || true)
   if [[ -n "${OUT_FILE_LINE:-}" ]]; then
     OUT_FILE_PATH=${OUT_FILE_LINE#OUT_FILE=}
+  fi
+  ALLOW_FILE_LINE=$(grep -E '^ALLOW_FILE=' /usr/local/bin/update-geo-no-russia.sh | head -n1 || true)
+  if [[ -n "${ALLOW_FILE_LINE:-}" ]]; then
+    ALLOW_FILE_PATH=${ALLOW_FILE_LINE#ALLOW_FILE=}
   fi
 fi
 
 # Fallback to стандартного пути, если скрипт обновления уже удалён
 if [[ -z "${OUT_FILE_PATH:-}" && -f /opt/remnanode/geo-no-russia.dat ]]; then
   OUT_FILE_PATH="/opt/remnanode/geo-no-russia.dat"
+fi
+if [[ -z "${ALLOW_FILE_PATH:-}" && -f /opt/remnanode/allow-domains-geosite.dat ]]; then
+  ALLOW_FILE_PATH="/opt/remnanode/allow-domains-geosite.dat"
 fi
 
 log_info "Остановка таймера и сервиса (если запущены)..."
@@ -60,6 +68,19 @@ if [[ -n "${OUT_FILE_PATH:-}" && -f "$OUT_FILE_PATH" ]]; then
     log_success "Файл удалён: $OUT_FILE_PATH"
   else
     log_warn "Файл базы оставлен: $OUT_FILE_PATH"
+  fi
+fi
+
+if [[ -n "${ALLOW_FILE_PATH:-}" && -f "$ALLOW_FILE_PATH" ]]; then
+  echo
+  log_info "Обнаружен файл allow-domains: $ALLOW_FILE_PATH"
+  read -p "Удалить файл allow-domains geosite.dat? [y/N]: " ANSWER </dev/tty || ANSWER=""
+  ANSWER=${ANSWER:-N}
+  if [[ "$ANSWER" =~ ^[Yy]$ ]]; then
+    rm -f "$ALLOW_FILE_PATH"
+    log_success "Файл удалён: $ALLOW_FILE_PATH"
+  else
+    log_warn "Файл allow-domains оставлен: $ALLOW_FILE_PATH"
   fi
 fi
 

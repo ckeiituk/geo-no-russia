@@ -44,6 +44,7 @@ echo
 
 # Сбрасываем возможные значения из окружения
 OUT_FILE=""
+ALLOW_FILE=""
 CONTAINER_NAME=""
 UPDATE_TIME=""
 CONFIRM=""
@@ -52,6 +53,12 @@ if ! read -p "Путь к geo-no-russia.dat [/opt/remnanode/geo-no-russia.dat]: 
   OUT_FILE=""
 fi
 OUT_FILE=${OUT_FILE:-/opt/remnanode/geo-no-russia.dat}
+
+DEFAULT_ALLOW_FILE="$(dirname "$OUT_FILE")/allow-domains-geosite.dat"
+if ! read -p "Путь к allow-domains geosite.dat [${DEFAULT_ALLOW_FILE}]: " ALLOW_FILE </dev/tty; then
+  ALLOW_FILE=""
+fi
+ALLOW_FILE=${ALLOW_FILE:-$DEFAULT_ALLOW_FILE}
 
 if ! read -p "Имя Docker контейнера Xray [remnanode]: " CONTAINER_NAME </dev/tty; then
   CONTAINER_NAME=""
@@ -78,7 +85,8 @@ fi
 
 echo
 log_info "Параметры установки:"
-echo "  Файл: $OUT_FILE"
+echo "  Файл geo-no-russia.dat: $OUT_FILE"
+echo "  Файл allow-domains geosite.dat: $ALLOW_FILE"
 echo "  Контейнер: $CONTAINER_NAME"
 echo "  Время обновления: $UPDATE_TIME"
 echo
@@ -99,6 +107,12 @@ if [[ ! -d "$OUT_DIR" ]]; then
   mkdir -p "$OUT_DIR"
 fi
 
+ALLOW_DIR=$(dirname "$ALLOW_FILE")
+if [[ ! -d "$ALLOW_DIR" ]]; then
+  log_info "Создание директории $ALLOW_DIR"
+  mkdir -p "$ALLOW_DIR"
+fi
+
 # Download initial file
 log_info "Загрузка geo-no-russia.dat..."
 DOWNLOAD_URL="https://github.com/ckeiituk/geo-no-russia/releases/latest/download/geo-no-russia.dat"
@@ -114,9 +128,24 @@ else
   exit 1
 fi
 
+log_info "Загрузка allow-domains geosite.dat..."
+ALLOW_DOWNLOAD_URL="https://github.com/itdoginfo/allow-domains/releases/latest/download/geosite.dat"
+if curl -fsSL "$ALLOW_DOWNLOAD_URL" -o "$ALLOW_FILE"; then
+  if command -v strings &>/dev/null; then
+    ALLOW_DOMAINS=$(strings "$ALLOW_FILE" | grep -c '^[A-Za-z0-9]' || echo "unknown")
+    log_success "Файл загружен ($ALLOW_DOMAINS элементов)"
+  else
+    log_success "Файл загружен"
+  fi
+else
+  log_error "Не удалось загрузить allow-domains файл"
+  exit 1
+fi
+
 # Create update script
 log_info "Создание скрипта обновления..."
 ESCAPED_OUT_FILE=$(printf '%q' "$OUT_FILE")
+ESCAPED_ALLOW_FILE=$(printf '%q' "$ALLOW_FILE")
 ESCAPED_CONTAINER_NAME=$(printf '%q' "$CONTAINER_NAME")
 cat > /usr/local/bin/update-geo-no-russia.sh <<EOF
 #!/usr/bin/env bash
@@ -125,37 +154,55 @@ set -euo pipefail
 REPO="ckeiituk/geo-no-russia"
 OUT_FILE=$ESCAPED_OUT_FILE
 CONTAINER_NAME=$ESCAPED_CONTAINER_NAME
-TMP_FILE="\$OUT_FILE.tmp"
+ALLOW_REPO="itdoginfo/allow-domains"
+ALLOW_FILE=$ESCAPED_ALLOW_FILE
+MAIN_ASSET_NAME="geo-no-russia.dat"
+ALLOW_ASSET_NAME="geosite.dat"
+ANY_UPDATED=0
 
 BASE_DEPS=(curl jq sha256sum)
 for cmd in "\${BASE_DEPS[@]}"; do
   command -v "\$cmd" &>/dev/null || { echo "[!] Missing: \$cmd"; exit 1; }
 done
 
-RELEASE_URL=\$(curl -fsSL "https://api.github.com/repos/\$REPO/releases/latest" \\
-  | jq -r '.assets[] | select(.name=="geo-no-russia.dat") | .browser_download_url')
+download_and_update() {
+  local repo=\$1
+  local asset_name=\$2
+  local target_file=\$3
+  local label=\$4
+  local tmp_file="\${target_file}.tmp"
 
-if [[ -z "\$RELEASE_URL" ]] || [[ "\$RELEASE_URL" == "null" ]]; then
-  echo "[!] Failed to fetch release URL"
-  exit 1
-fi
+  local release_url
+  release_url=\$(curl -fsSL "https://api.github.com/repos/\${repo}/releases/latest" \\
+    | jq -r --arg NAME "\$asset_name" '.assets[] | select(.name==$NAME) | .browser_download_url')
 
-curl -fsSL "\$RELEASE_URL" -o "\$TMP_FILE"
+  if [[ -z "\$release_url" || "\$release_url" == "null" ]]; then
+    echo "[!] \${label}: failed to fetch release URL"
+    return 1
+  fi
 
-OLD_HASH="NONE"
-[[ -f "\$OUT_FILE" ]] && OLD_HASH=\$(sha256sum "\$OUT_FILE" | awk '{print \$1}')
-NEW_HASH=\$(sha256sum "\$TMP_FILE" | awk '{print \$1}')
+  curl -fsSL "\$release_url" -o "\$tmp_file"
 
-if [[ "\$OLD_HASH" == "\$NEW_HASH" ]]; then
-  echo "[=] No changes (\$NEW_HASH)"
-  rm -f "\$TMP_FILE"
-  exit 0
-fi
-mv -f "\$TMP_FILE" "\$OUT_FILE"
-echo "[+] Updated: \$OLD_HASH -> \$NEW_HASH"
+  local old_hash="NONE"
+  [[ -f "\$target_file" ]] && old_hash=\$(sha256sum "\$target_file" | awk '{print \$1}')
+  local new_hash=\$(sha256sum "\$tmp_file" | awk '{print \$1}')
+
+  if [[ "\$old_hash" == "\$new_hash" ]]; then
+    echo "[=] \${label}: no changes (\$new_hash)"
+    rm -f "\$tmp_file"
+    return 0
+  fi
+
+  mv -f "\$tmp_file" "\$target_file"
+  echo "[+] \${label}: updated \$old_hash -> \$new_hash"
+  ANY_UPDATED=1
+}
+
+download_and_update "\$REPO" "\$MAIN_ASSET_NAME" "\$OUT_FILE" "geo-no-russia" || exit 1
+download_and_update "\$ALLOW_REPO" "\$ALLOW_ASSET_NAME" "\$ALLOW_FILE" "allow-domains" || exit 1
 
 RELOAD_CMD="\${GEO_NR_RELOAD_CMD:-}"
-if [[ -n "\$RELOAD_CMD" ]]; then
+if [[ -n "\$RELOAD_CMD" && \$ANY_UPDATED -eq 1 ]]; then
   echo "[*] Running reload command..."
   if bash -lc "\$RELOAD_CMD"; then
     echo "[✓] Reload command succeeded"
@@ -238,6 +285,10 @@ echo '        }'
 echo '      ]'
 echo '    }'
 echo '  }'
+echo
+ALLOW_BASENAME=$(basename "$ALLOW_FILE")
+echo "  Дополнительный geosite (allow-domains): $ALLOW_FILE"
+echo "  Пример правила: \"domain\": [\"ext:${ALLOW_BASENAME}:ANIME\"]"
 echo
 
 # Show next run time

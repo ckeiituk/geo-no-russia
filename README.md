@@ -1,12 +1,12 @@
 # geo-no-russia: автоматическая установка и обновление базы
 
 Этот репозиторий содержит скрипт установки, который:
-- один раз скачивает актуальный `geo-no-russia.dat`;
+- один раз скачивает актуальные `geo-no-russia.dat` и `allow-domains geosite.dat`;
 - настраивает путь к файлу и (опционально) Docker‑контейнер Xray;
 - разворачивает отдельный скрипт автообновления;
 - настраивает systemd‑service и таймер для ежедневного обновления.
 
-Файл `geo-no-russia.dat` затем можно использовать в Xray/V2Ray как внешний источник доменов через `ext:geo-no-russia.dat:no-russia`.
+Файл `geo-no-russia.dat` затем можно использовать в Xray/V2Ray как внешний источник доменов через `ext:geo-no-russia.dat:no-russia`. Дополнительно рядом устанавливается и обновляется geosite от `itdoginfo/allow-domains` (по умолчанию `allow-domains-geosite.dat`).
 
 ---
 
@@ -42,13 +42,15 @@ curl -fsSL https://raw.githubusercontent.com/ckeiituk/geo-no-russia/main/install
 Во время работы скрипт задаст несколько вопросов:
 - путь к файлу `geo-no-russia.dat`  
   по умолчанию: `/opt/remnanode/geo-no-russia.dat`;
+- путь к `allow-domains geosite.dat` (файл `geosite.dat` из `itdoginfo/allow-domains`)  
+  по умолчанию: `/opt/remnanode/allow-domains-geosite.dat`;
 - имя Docker‑контейнера Xray  
   по умолчанию: `remnanode`;
 - время ежедневного обновления в формате `HH:MM` (24‑часовой формат)  
   по умолчанию: `04:00`.
 
 После подтверждения скрипт:
-- скачает последнюю версию `geo-no-russia.dat` из релизов GitHub;
+- скачает последние версии `geo-no-russia.dat` и `allow-domains geosite.dat` из релизов GitHub;
 - создаст `/usr/local/bin/update-geo-no-russia.sh`;
 - создаст и активирует:
   - `geo-update.service`;
@@ -63,10 +65,9 @@ curl -fsSL https://raw.githubusercontent.com/ckeiituk/geo-no-russia/main/install
 - `geo-update.timer` — systemd‑таймер, который раз в сутки запускает `geo-update.service`.
 - `geo-update.service` — запускает скрипт `/usr/local/bin/update-geo-no-russia.sh`.
 - `update-geo-no-russia.sh`:
-  - обращается к GitHub API (`ckeiituk/geo-no-russia`) и находит URL последнего релиза `geo-no-russia.dat`;
-  - скачивает файл во временный `*.tmp`;
-  - сравнивает SHA‑256 старой и новой версий;
-  - только при изменении хэша атомарно заменяет файл.
+  - обращается к GitHub API и находит URL последних релизов `geo-no-russia.dat` (`ckeiituk/geo-no-russia`) и `geosite.dat` (`itdoginfo/allow-domains`);
+  - для каждого файла скачивает временную копию, сравнивает SHA‑256 и при изменении атомарно подменяет основной файл;
+  - если обновился хотя бы один файл и задан `GEO_NR_RELOAD_CMD`, выполняет команду перезапуска.
 
 Поведение после обновления:
 - если в системе есть `docker`, установщик по умолчанию настраивает автоперезапуск контейнера через `docker restart <имя-контейнера>` (переменная окружения `GEO_NR_RELOAD_CMD` в `geo-update.service`);
@@ -172,6 +173,16 @@ sudo systemctl restart geo-update.timer
 
 Настройка `outboundTag` и остальной конфигурации Xray остаётся за вами.
 
+### Дополнительный geosite (allow-domains)
+
+Скрипт одновременно поддерживает файл `allow-domains geosite.dat` (репозиторий [itdoginfo/allow-domains](https://github.com/itdoginfo/allow-domains)).
+
+- По умолчанию он сохраняется как `/opt/remnanode/allow-domains-geosite.dat`, но путь можно изменить в мастере установки.
+- Использовать его можно аналогично: `"domain": ["ext:allow-domains-geosite.dat:ANIME"]`, где `ANIME`, `RUSSIA-OUTSIDE`, `TELEGRAM`, `BLOCK` и другие — имена групп внутри `geosite.dat`.
+- `update-geo-no-russia.sh` проверяет обе базы; если обновляется хотя бы одна, выполняется хук `GEO_NR_RELOAD_CMD`.
+
+Так вы можете держать «белый» список доменов из allow-domains рядом с `geo-no-russia.dat`, не собирая `.dat` вручную.
+
 ---
 
 ## Ручная установка из репозитория
@@ -218,7 +229,7 @@ curl -fsSL https://raw.githubusercontent.com/ckeiituk/geo-no-russia/main/uninsta
 - остановит и отключит `geo-update.timer` / `geo-update.service`;
 - удалит `/etc/systemd/system/geo-update.timer` и `/etc/systemd/system/geo-update.service`;
 - удалит `/usr/local/bin/update-geo-no-russia.sh`;
-- при наличии `geo-no-russia.dat` предложит удалить и его (по умолчанию оставляет).
+- при наличии `geo-no-russia.dat` и/или `allow-domains-geosite.dat` предложит удалить их (по умолчанию файлы можно оставить).
 
 ---
 
