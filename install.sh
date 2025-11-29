@@ -13,6 +13,170 @@ log_success() { echo -e "${GREEN}[✓]${NC} $1"; }
 log_warn() { echo -e "${YELLOW}[!]${NC} $1"; }
 log_error() { echo -e "${RED}[✗]${NC} $1"; }
 
+ensure_compose_volume() {
+  local compose_path="$1"
+  local service_name="$2"
+  local host_path="$3"
+  local container_path="$4"
+  local label="$5"
+
+  if [[ -z "$compose_path" || -z "$service_name" || -z "$host_path" || -z "$container_path" ]]; then
+    return 0
+  fi
+
+  if [[ ! -f "$compose_path" ]]; then
+    log_warn "docker-compose не найден по пути $compose_path (пропускаю $label)"
+    return 0
+  fi
+
+  if ! command -v python3 &>/dev/null; then
+    log_warn "python3 не найден: пропускаю обновление docker-compose для $label"
+    return 0
+  fi
+
+  if ! COMPOSE_PATH="$compose_path" \
+    SERVICE_NAME="$service_name" \
+    HOST_PATH="$host_path" \
+    CONTAINER_PATH="$container_path" \
+    LABEL="$label" \
+    python3 <<'PY'
+import os
+import sys
+from pathlib import Path
+
+compose_path = Path(os.environ["COMPOSE_PATH"]).resolve()
+service_name = os.environ["SERVICE_NAME"].strip()
+host_path = os.environ["HOST_PATH"].strip()
+container_path = os.environ["CONTAINER_PATH"].strip()
+label = os.environ["LABEL"].strip()
+
+compose_dir = compose_path.parent.resolve()
+compose_dir_str = str(compose_dir)
+desired_host_abs = os.path.normpath(os.path.abspath(host_path))
+desired_container = os.path.normpath(container_path)
+
+try:
+    lines = compose_path.read_text().splitlines()
+except FileNotFoundError:
+    print(f"[docker-compose] файл не найден: {compose_path}")
+    sys.exit(1)
+
+def indent_width(text: str) -> int:
+    return len(text) - len(text.lstrip(' '))
+
+service_idx = None
+service_indent = 0
+for idx, line in enumerate(lines):
+    stripped = line.strip()
+    if not stripped or stripped.startswith('#'):
+        continue
+    if stripped == f"{service_name}:":
+        service_idx = idx
+        service_indent = indent_width(line)
+        break
+
+if service_idx is None:
+    print(f"[docker-compose] сервис '{service_name}' не найден (пропуск)")
+    sys.exit(10)
+
+service_block_end = len(lines)
+volumes_start = None
+volumes_indent = None
+volumes_end = None
+
+def normalize_host(value: str):
+    value = value.strip()
+    if not value:
+        return None
+    if value[0] in "'\"" and value[-1] == value[0]:
+        value = value[1:-1]
+    value = os.path.expanduser(value)
+    if os.path.isabs(value):
+        return os.path.normpath(value)
+    return os.path.normpath(str((compose_dir / value).resolve()))
+
+idx = service_idx + 1
+while idx < len(lines):
+    line = lines[idx]
+    stripped = line.strip()
+    indent = indent_width(line)
+
+    if stripped and indent <= service_indent:
+        service_block_end = idx
+        break
+
+    if not stripped:
+        idx += 1
+        continue
+
+    if volumes_start is None and stripped == "volumes:" and indent > service_indent:
+        volumes_start = idx
+        volumes_indent = indent
+        idx += 1
+        continue
+
+    if volumes_start is not None and idx > volumes_start:
+        if indent <= volumes_indent and stripped:
+            volumes_end = idx
+            break
+        if indent > volumes_indent and stripped.startswith('-'):
+            entry = stripped[1:].strip()
+            if not entry:
+                idx += 1
+                continue
+            if entry[0] in "'\"" and entry[-1] == entry[0]:
+                entry = entry[1:-1]
+            host_part, sep, rest = entry.partition(':')
+            if not sep:
+                idx += 1
+                continue
+            container_part = rest
+            if ':' in container_part:
+                container_part = container_part.split(':', 1)[0]
+            host_abs = normalize_host(host_part)
+            container_norm = os.path.normpath(container_part.strip())
+            if host_abs == desired_host_abs and container_norm == desired_container:
+                print(f"[docker-compose] {label}: volume уже присутствует")
+                sys.exit(0)
+        idx += 1
+        continue
+
+    idx += 1
+
+if volumes_start is None:
+    volumes_indent = service_indent + 2
+    entry_indent = volumes_indent + 2
+    insert_idx = service_block_end
+    lines.insert(insert_idx, ' ' * volumes_indent + 'volumes:')
+    insert_idx += 1
+else:
+    if volumes_end is None:
+        volumes_end = service_block_end
+    entry_indent = volumes_indent + 2
+    insert_idx = volumes_end if volumes_end is not None else service_block_end
+
+host_entry_value = desired_host_abs
+try:
+    rel_candidate = os.path.relpath(desired_host_abs, compose_dir_str)
+    if not rel_candidate.startswith('..'):
+        if not rel_candidate.startswith('.'):
+            rel_candidate = f"./{rel_candidate}"
+        host_entry_value = rel_candidate
+except ValueError:
+    pass
+
+volume_value = f"{host_entry_value}:{container_path}"
+entry_line = ' ' * entry_indent + f"- '{volume_value}'"
+lines.insert(insert_idx, entry_line)
+
+compose_path.write_text('\n'.join(lines) + '\n')
+print(f"[docker-compose] {label}: добавлен volume {volume_value}")
+PY
+  then
+    log_warn "docker-compose: не удалось настроить volume для $label"
+  fi
+}
+
 # Check root
 if [[ $EUID -ne 0 ]]; then
    log_error "Запустите скрипт с sudo"
@@ -47,6 +211,10 @@ OUT_FILE=""
 ALLOW_FILE=""
 CONTAINER_NAME=""
 UPDATE_TIME=""
+DOCKER_COMPOSE_PATH=""
+DOCKER_COMPOSE_SERVICE=""
+GEO_CONTAINER_PATH=""
+ALLOW_CONTAINER_PATH=""
 CONFIRM=""
 
 if ! read -p "Путь к geo-no-russia.dat [/opt/remnanode/geo-no-russia.dat]: " OUT_FILE </dev/tty; then
@@ -83,12 +251,57 @@ if ((10#$HOUR > 23 || 10#$MINUTE > 59)); then
   exit 1
 fi
 
+DEFAULT_COMPOSE_PATH="$(dirname "$OUT_FILE")/docker-compose.yml"
+DEFAULT_COMPOSE_DECISION="n"
+COMPOSE_PROMPT="y/N"
+if [[ -f "$DEFAULT_COMPOSE_PATH" ]]; then
+  DEFAULT_COMPOSE_DECISION="Y"
+  COMPOSE_PROMPT="Y/n"
+fi
+
+DOCKER_COMPOSE_DECISION=""
+if ! read -p "Добавить volume в docker-compose.yml? [$COMPOSE_PROMPT]: " DOCKER_COMPOSE_DECISION </dev/tty; then
+  DOCKER_COMPOSE_DECISION=""
+fi
+DOCKER_COMPOSE_DECISION=${DOCKER_COMPOSE_DECISION:-$DEFAULT_COMPOSE_DECISION}
+if [[ $DOCKER_COMPOSE_DECISION =~ ^[Yy]$ ]]; then
+  if ! read -p "Путь к docker-compose.yml [$DEFAULT_COMPOSE_PATH]: " DOCKER_COMPOSE_PATH </dev/tty; then
+    DOCKER_COMPOSE_PATH=""
+  fi
+  DOCKER_COMPOSE_PATH=${DOCKER_COMPOSE_PATH:-$DEFAULT_COMPOSE_PATH}
+
+  if [[ ! -f "$DOCKER_COMPOSE_PATH" ]]; then
+    log_warn "docker-compose.yml не найден по пути $DOCKER_COMPOSE_PATH. Этап будет пропущен."
+    DOCKER_COMPOSE_PATH=""
+  else
+    if ! read -p "Имя сервиса в docker-compose [$CONTAINER_NAME]: " DOCKER_COMPOSE_SERVICE </dev/tty; then
+      DOCKER_COMPOSE_SERVICE=""
+    fi
+    DOCKER_COMPOSE_SERVICE=${DOCKER_COMPOSE_SERVICE:-$CONTAINER_NAME}
+
+    GEO_DEFAULT_IN_CONTAINER="/usr/local/share/xray/geo-no-russia.dat"
+    if ! read -p "Путь внутри контейнера для geo-no-russia.dat [$GEO_DEFAULT_IN_CONTAINER]: " GEO_CONTAINER_PATH </dev/tty; then
+      GEO_CONTAINER_PATH=""
+    fi
+    GEO_CONTAINER_PATH=${GEO_CONTAINER_PATH:-$GEO_DEFAULT_IN_CONTAINER}
+
+    ALLOW_DEFAULT_IN_CONTAINER="/usr/local/share/xray/allow-domains-geosite.dat"
+    if ! read -p "Путь внутри контейнера для allow-domains geosite.dat [$ALLOW_DEFAULT_IN_CONTAINER]: " ALLOW_CONTAINER_PATH </dev/tty; then
+      ALLOW_CONTAINER_PATH=""
+    fi
+    ALLOW_CONTAINER_PATH=${ALLOW_CONTAINER_PATH:-$ALLOW_DEFAULT_IN_CONTAINER}
+  fi
+fi
+
 echo
 log_info "Параметры установки:"
 echo "  Файл geo-no-russia.dat: $OUT_FILE"
 echo "  Файл allow-domains geosite.dat: $ALLOW_FILE"
 echo "  Контейнер: $CONTAINER_NAME"
 echo "  Время обновления: $UPDATE_TIME"
+if [[ -n "$DOCKER_COMPOSE_PATH" ]]; then
+  echo "  docker-compose: $DOCKER_COMPOSE_PATH (service: $DOCKER_COMPOSE_SERVICE)"
+fi
 echo
 
 if ! read -p "Продолжить? [Y/n]: " CONFIRM </dev/tty; then
@@ -262,6 +475,12 @@ systemctl enable geo-update.timer
 systemctl start geo-update.timer
 
 log_success "Таймер активирован"
+
+if [[ -n "$DOCKER_COMPOSE_PATH" ]]; then
+  log_info "Проверка docker-compose volumes..."
+  ensure_compose_volume "$DOCKER_COMPOSE_PATH" "$DOCKER_COMPOSE_SERVICE" "$OUT_FILE" "$GEO_CONTAINER_PATH" "geo-no-russia"
+  ensure_compose_volume "$DOCKER_COMPOSE_PATH" "$DOCKER_COMPOSE_SERVICE" "$ALLOW_FILE" "$ALLOW_CONTAINER_PATH" "allow-domains"
+fi
 
 # Show status
 echo

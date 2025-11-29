@@ -4,7 +4,8 @@
 - один раз скачивает актуальные `geo-no-russia.dat` и `allow-domains geosite.dat`;
 - настраивает путь к файлу и (опционально) Docker‑контейнер Xray;
 - разворачивает отдельный скрипт автообновления;
-- настраивает systemd‑service и таймер для ежедневного обновления.
+- настраивает systemd‑service и таймер для ежедневного обновления;
+- (опционально) обновляет `docker-compose.yml`, добавляя недостающие `volumes` для обоих файлов.
 
 Файл `geo-no-russia.dat` затем можно использовать в Xray/V2Ray как внешний источник доменов через `ext:geo-no-russia.dat:no-russia`. Дополнительно рядом устанавливается и обновляется geosite от `itdoginfo/allow-domains` (по умолчанию `allow-domains-geosite.dat`).
 
@@ -18,7 +19,8 @@
   - обязательные: `curl`, `jq`, `sha256sum`, `systemctl`;
   - опциональные:
     - `docker` — для автоматического перезапуска контейнера (через `docker restart`);
-    - `strings` — только для отображения количества доменов после загрузки.
+    - `strings` — только для отображения количества доменов после загрузки;
+    - `python3` — нужен, если хотите, чтобы скрипт автоматически дописывал `volumes` в `docker-compose.yml`.
 
 Пример установки зависимостей для Debian/Ubuntu:
 
@@ -47,7 +49,9 @@ curl -fsSL https://raw.githubusercontent.com/ckeiituk/geo-no-russia/main/install
 - имя Docker‑контейнера Xray  
   по умолчанию: `remnanode`;
 - время ежедневного обновления в формате `HH:MM` (24‑часовой формат)  
-  по умолчанию: `04:00`.
+  по умолчанию: `04:00`;
+- добавить ли тома в `docker-compose.yml` (если рядом найден `docker-compose.yml`)  
+  по умолчанию предлагается файл из того же каталога и сервис с именем контейнера.
 
 После подтверждения скрипт:
 - скачает последние версии `geo-no-russia.dat` и `allow-domains geosite.dat` из релизов GitHub;
@@ -173,6 +177,27 @@ sudo systemctl restart geo-update.timer
 
 Настройка `outboundTag` и остальной конфигурации Xray остаётся за вами.
 
+Расширенный пример, когда одновременно используется и `geo-no-russia.dat`, и geosite из `allow-domains` (например, группа `RUSSIA-OUTSIDE`):
+
+```jsonc
+{
+  "routing": {
+    "rules": [
+      {
+        "type": "field",
+        "domain": ["ext:geo-no-russia.dat:no-russia"],
+        "outboundTag": "proxy"
+      },
+      {
+        "type": "field",
+        "domain": ["ext:allow-domains-geosite.dat:RUSSIA-OUTSIDE"],
+        "outboundTag": "proxy"
+      }
+    ]
+  }
+}
+```
+
 ### Дополнительный geosite (allow-domains)
 
 Скрипт одновременно поддерживает файл `allow-domains geosite.dat` (репозиторий [itdoginfo/allow-domains](https://github.com/itdoginfo/allow-domains)).
@@ -182,6 +207,16 @@ sudo systemctl restart geo-update.timer
 - `update-geo-no-russia.sh` проверяет обе базы; если обновляется хотя бы одна, выполняется хук `GEO_NR_RELOAD_CMD`.
 
 Так вы можете держать «белый» список доменов из allow-domains рядом с `geo-no-russia.dat`, не собирая `.dat` вручную.
+
+### Автоматическое обновление docker-compose (опционально)
+
+Если во время установки выбрать добавление томов, скрипт:
+- найдёт указанный `docker-compose.yml` и сервис (по умолчанию — расположенный рядом с файлом базы и одноимённый контейнеру);
+- убедится, что в `services.<имя>.volumes` есть строки для `geo-no-russia.dat` и `allow-domains geosite.dat` (создаст блок `volumes`, если его не было);
+- добавит недостающие записи в формате `- '/полный/путь:/usr/local/share/xray/...'` без удаления существующих томов;
+- пропустит шаг с предупреждением, если `python3` или сам `docker-compose.yml` не найдены.
+
+Это избавляет от ручного редактирования compose и гарантирует, что обновляемые файлы проброшены внутрь контейнера Xray.
 
 ---
 
