@@ -5,6 +5,7 @@
 - настраивает путь к файлу и (опционально) Docker‑контейнер Xray;
 - разворачивает отдельный скрипт автообновления;
 - настраивает systemd‑service и таймер для ежедневного обновления;
+- по желанию скачивает `dlc.dat` из [v2fly/domain-list-community](https://github.com/v2fly/domain-list-community) и создаёт отдельный еженедельный таймер;
 - (опционально) обновляет `docker-compose.yml`, добавляя недостающие `volumes` для обоих файлов.
 
 Файл `geo-no-russia.dat` затем можно использовать в Xray/V2Ray как внешний источник доменов через `ext:geo-no-russia.dat:no-russia`. Дополнительно рядом устанавливается и обновляется geosite от `itdoginfo/allow-domains` (по умолчанию `allow-domains-geosite.dat`).
@@ -46,6 +47,8 @@ curl -fsSL https://raw.githubusercontent.com/ckeiituk/geo-no-russia/main/install
   по умолчанию: `/opt/remnanode/geo-no-russia.dat`;
 - путь к `allow-domains geosite.dat` (файл `geosite.dat` из `itdoginfo/allow-domains`)  
   по умолчанию: `/opt/remnanode/allow-domains-geosite.dat`;
+- добавлять ли `dlc.dat` из domain-list-community (при согласии — путь к файлу, день недели и время обновления)  
+  файл выключен по умолчанию, пример расписания: `Sun 03:30`;
 - имя Docker‑контейнера Xray  
   по умолчанию: `remnanode`;
 - время ежедневного обновления в формате `HH:MM` (24‑часовой формат)  
@@ -58,6 +61,7 @@ curl -fsSL https://raw.githubusercontent.com/ckeiituk/geo-no-russia/main/install
 После подтверждения скрипт:
 - скачает последние версии `geo-no-russia.dat` и `allow-domains geosite.dat` из релизов GitHub;
 - создаст `/usr/local/bin/update-geo-no-russia.sh`;
+- при выборе `dlc.dat` дополнительно создаст `/usr/local/bin/update-dlc.sh`, `dlc-update.service` и `dlc-update.timer`;
 - создаст и активирует:
   - `geo-update.service`;
   - `geo-update.timer` с ежедневным запуском в указанное время.
@@ -70,6 +74,7 @@ curl -fsSL https://raw.githubusercontent.com/ckeiituk/geo-no-russia/main/install
 
 - `geo-update.timer` — systemd‑таймер, который раз в сутки запускает `geo-update.service`.
 - `geo-update.service` — запускает скрипт `/usr/local/bin/update-geo-no-russia.sh`.
+- при согласии на установку `dlc.dat` дополнительно появляются `dlc-update.timer` (по умолчанию ежевоскресенье ночью) и `dlc-update.service`, которые обновляют `/usr/local/bin/update-dlc.sh`.
 - `update-geo-no-russia.sh`:
   - обращается к GitHub API и находит URL последних релизов `geo-no-russia.dat` (`ckeiituk/geo-no-russia`) и `geosite.dat` (`itdoginfo/allow-domains`);
   - для каждого файла скачивает временную копию, сравнивает SHA‑256 и при изменении атомарно подменяет основной файл;
@@ -88,6 +93,12 @@ curl -fsSL https://raw.githubusercontent.com/ckeiituk/geo-no-russia/main/install
 
   ```bash
   systemctl status geo-update.timer
+  ```
+
+- (если подключен `dlc.dat`) статус еженедельного таймера:
+
+  ```bash
+  systemctl status dlc-update.timer
   ```
 
 - Посмотреть запланированное время и историю запусков:
@@ -211,11 +222,38 @@ sudo systemctl restart geo-update.timer
 
 Так вы можете держать «белый» список доменов из allow-domains рядом с `geo-no-russia.dat`, не собирая `.dat` вручную.
 
+### Дополнительный geosite (domain-list-community)
+
+Если на этапе установки выбрать загрузку `dlc.dat`, скрипт:
+- скачает файл из [v2fly/domain-list-community](https://github.com/v2fly/domain-list-community);
+- создаст `/usr/local/bin/update-dlc.sh`, `dlc-update.service` и `dlc-update.timer`;
+- настроит расписание обновлений раз в неделю (день недели и время задаются в мастере).
+
+`dlc-update.service` использует тот же `GEO_NR_RELOAD_CMD`, что и основной сервис — перезапуск происходит только при реальном изменении файла. В docker-compose можно автоматически добавить отдельный volume для `dlc.dat`.
+
+Использование внутри Xray:
+
+```jsonc
+{
+  "routing": {
+    "rules": [
+      {
+        "type": "field",
+        "domain": ["ext:dlc.dat:google"],
+        "outboundTag": "proxy"
+      }
+    ]
+  }
+}
+```
+
+Где `dlc.dat` — путь к файлу внутри контейнера.
+
 ### Автоматическое обновление docker-compose (опционально)
 
 Если во время установки выбрать добавление томов, скрипт:
 - найдёт указанный `docker-compose.yml` и сервис (по умолчанию — расположенный рядом с файлом базы и одноимённый контейнеру);
-- убедится, что в `services.<имя>.volumes` есть строки для `geo-no-russia.dat` и `allow-domains geosite.dat` (создаст блок `volumes`, если его не было);
+- убедится, что в `services.<имя>.volumes` есть строки для `geo-no-russia.dat`, `allow-domains geosite.dat` и (при выборе) `dlc.dat` (создаст блок `volumes`, если его не было);
 - добавит недостающие записи в формате `- '/полный/путь:/usr/local/share/xray/...'` без удаления существующих томов;
 - пропустит шаг с предупреждением, если `python3` или сам `docker-compose.yml` не найдены.
 - при выборе перезапуска после установки автоматически выполнит `docker compose up -d <service>` (или `docker-compose up -d <service>`) для применения томов; при отказе напомнит сделать это вручную.

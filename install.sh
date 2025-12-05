@@ -13,6 +13,22 @@ log_success() { echo -e "${GREEN}[✓]${NC} $1"; }
 log_warn() { echo -e "${YELLOW}[!]${NC} $1"; }
 log_error() { echo -e "${RED}[✗]${NC} $1"; }
 
+canonicalize_weekday() {
+  local input="$1"
+  local upper
+  upper=$(echo "$input" | tr '[:lower:]' '[:upper:]')
+  case "$upper" in
+    MON|MONDAY) printf "Mon";;
+    TUE|TUES|TUESDAY) printf "Tue";;
+    WED|WEDS|WEDNESDAY) printf "Wed";;
+    THU|THUR|THURS|THURSDAY) printf "Thu";;
+    FRI|FRIDAY) printf "Fri";;
+    SAT|SATURDAY) printf "Sat";;
+    SUN|SUNDAY) printf "Sun";;
+    *) return 1;;
+  esac
+}
+
 run_compose_up_service() {
   local compose_file="$1"
   local service_name="$2"
@@ -229,10 +245,15 @@ OUT_FILE=""
 ALLOW_FILE=""
 CONTAINER_NAME=""
 UPDATE_TIME=""
+INSTALL_DLC="0"
+DLC_FILE=""
+DLC_UPDATE_DAY=""
+DLC_UPDATE_TIME=""
 DOCKER_COMPOSE_PATH=""
 DOCKER_COMPOSE_SERVICE=""
 GEO_CONTAINER_PATH=""
 ALLOW_CONTAINER_PATH=""
+DLC_CONTAINER_PATH=""
 RESTART_AFTER_INSTALL="0"
 CONFIRM=""
 
@@ -246,6 +267,35 @@ if ! read -p "Путь к allow-domains geosite.dat [${DEFAULT_ALLOW_FILE}]: " A
   ALLOW_FILE=""
 fi
 ALLOW_FILE=${ALLOW_FILE:-$DEFAULT_ALLOW_FILE}
+
+DLC_DECISION=""
+if ! read -p "Добавить geosite из v2fly/domain-list-community (dlc.dat) для зарубежных нод? [y/N]: " DLC_DECISION </dev/tty; then
+  DLC_DECISION=""
+fi
+if [[ $DLC_DECISION =~ ^[Yy]$ ]]; then
+  INSTALL_DLC="1"
+  DEFAULT_DLC_FILE="$(dirname "$OUT_FILE")/dlc.dat"
+  if ! read -p "Путь к dlc.dat [${DEFAULT_DLC_FILE}]: " DLC_FILE </dev/tty; then
+    DLC_FILE=""
+  fi
+  DLC_FILE=${DLC_FILE:-$DEFAULT_DLC_FILE}
+
+  DLC_DAY_INPUT=""
+  if ! read -p "День недели для обновления dlc (Mon/Tue/.../Sun) [Sun]: " DLC_DAY_INPUT </dev/tty; then
+    DLC_DAY_INPUT=""
+  fi
+  DLC_DAY_INPUT=${DLC_DAY_INPUT:-Sun}
+  if ! DLC_DAY_CANON=$(canonicalize_weekday "$DLC_DAY_INPUT"); then
+    log_error "Неверный день недели для dlc: используйте Mon/Tue/.../Sun"
+    exit 1
+  fi
+  DLC_UPDATE_DAY="$DLC_DAY_CANON"
+
+  if ! read -p "Время обновления dlc (формат HH:MM) [03:30]: " DLC_UPDATE_TIME </dev/tty; then
+    DLC_UPDATE_TIME=""
+  fi
+  DLC_UPDATE_TIME=${DLC_UPDATE_TIME:-03:30}
+fi
 
 if ! read -p "Имя Docker контейнера Xray [remnanode]: " CONTAINER_NAME </dev/tty; then
   CONTAINER_NAME=""
@@ -268,6 +318,19 @@ MINUTE=${BASH_REMATCH[2]}
 if ((10#$HOUR > 23 || 10#$MINUTE > 59)); then
   log_error "Неверное время. Часы 00-23, минуты 00-59"
   exit 1
+fi
+
+if [[ "$INSTALL_DLC" == "1" ]]; then
+  if ! [[ $DLC_UPDATE_TIME =~ ^([0-9]{2}):([0-9]{2})$ ]]; then
+    log_error "Неверный формат времени для dlc. Используйте HH:MM"
+    exit 1
+  fi
+  DLC_HOUR=${BASH_REMATCH[1]}
+  DLC_MINUTE=${BASH_REMATCH[2]}
+  if ((10#$DLC_HOUR > 23 || 10#$DLC_MINUTE > 59)); then
+    log_error "Неверное время dlc. Часы 00-23, минуты 00-59"
+    exit 1
+  fi
 fi
 
 RESTART_PROMPT="y/N"
@@ -327,6 +390,14 @@ if [[ $DOCKER_COMPOSE_DECISION =~ ^[Yy]$ ]]; then
       ALLOW_CONTAINER_PATH=""
     fi
     ALLOW_CONTAINER_PATH=${ALLOW_CONTAINER_PATH:-$ALLOW_DEFAULT_IN_CONTAINER}
+
+    if [[ "$INSTALL_DLC" == "1" ]]; then
+      DLC_DEFAULT_IN_CONTAINER="/usr/local/share/xray/dlc.dat"
+      if ! read -p "Путь внутри контейнера для dlc.dat [$DLC_DEFAULT_IN_CONTAINER]: " DLC_CONTAINER_PATH </dev/tty; then
+        DLC_CONTAINER_PATH=""
+      fi
+      DLC_CONTAINER_PATH=${DLC_CONTAINER_PATH:-$DLC_DEFAULT_IN_CONTAINER}
+    fi
   fi
 fi
 
@@ -334,6 +405,10 @@ echo
 log_info "Параметры установки:"
 echo "  Файл geo-no-russia.dat: $OUT_FILE"
 echo "  Файл allow-domains geosite.dat: $ALLOW_FILE"
+if [[ "$INSTALL_DLC" == "1" ]]; then
+  echo "  Файл dlc.dat: $DLC_FILE"
+  echo "  Обновление dlc: $DLC_UPDATE_DAY $DLC_UPDATE_TIME"
+fi
 echo "  Контейнер: $CONTAINER_NAME"
 echo "  Время обновления: $UPDATE_TIME"
 if [[ -n "$DOCKER_COMPOSE_PATH" ]]; then
@@ -368,6 +443,14 @@ if [[ ! -d "$ALLOW_DIR" ]]; then
   mkdir -p "$ALLOW_DIR"
 fi
 
+if [[ "$INSTALL_DLC" == "1" ]]; then
+  DLC_DIR=$(dirname "$DLC_FILE")
+  if [[ ! -d "$DLC_DIR" ]]; then
+    log_info "Создание директории $DLC_DIR"
+    mkdir -p "$DLC_DIR"
+  fi
+fi
+
 # Download initial file
 log_info "Загрузка geo-no-russia.dat..."
 DOWNLOAD_URL="https://github.com/ckeiituk/geo-no-russia/releases/latest/download/geo-no-russia.dat"
@@ -397,11 +480,25 @@ else
   exit 1
 fi
 
+if [[ "$INSTALL_DLC" == "1" ]]; then
+  log_info "Загрузка dlc.dat (v2fly/domain-list-community)..."
+  DLC_DOWNLOAD_URL="https://github.com/v2fly/domain-list-community/releases/latest/download/dlc.dat"
+  if curl -fsSL "$DLC_DOWNLOAD_URL" -o "$DLC_FILE"; then
+    log_success "dlc.dat загружен"
+  else
+    log_error "Не удалось загрузить dlc.dat"
+    exit 1
+  fi
+fi
+
 # Create update script
 log_info "Создание скрипта обновления..."
 ESCAPED_OUT_FILE=$(printf '%q' "$OUT_FILE")
 ESCAPED_ALLOW_FILE=$(printf '%q' "$ALLOW_FILE")
 ESCAPED_CONTAINER_NAME=$(printf '%q' "$CONTAINER_NAME")
+if [[ "$INSTALL_DLC" == "1" ]]; then
+  ESCAPED_DLC_FILE=$(printf '%q' "$DLC_FILE")
+fi
 cat > /usr/local/bin/update-geo-no-russia.sh <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
@@ -470,6 +567,61 @@ EOF
 chmod +x /usr/local/bin/update-geo-no-russia.sh
 log_success "Скрипт создан: /usr/local/bin/update-geo-no-russia.sh"
 
+if [[ "$INSTALL_DLC" == "1" ]]; then
+  log_info "Создание скрипта обновления dlc..."
+  cat > /usr/local/bin/update-dlc.sh <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO="v2fly/domain-list-community"
+ASSET_NAME="dlc.dat"
+TARGET_FILE=$ESCAPED_DLC_FILE
+ANY_UPDATED=0
+
+BASE_DEPS=(curl jq sha256sum)
+for cmd in "\${BASE_DEPS[@]}"; do
+  command -v "\$cmd" &>/dev/null || { echo "[!] Missing: \$cmd"; exit 1; }
+done
+
+release_url=\$(curl -fsSL "https://api.github.com/repos/\${REPO}/releases/latest" \\
+  | jq -r --arg NAME "\$ASSET_NAME" '.assets[] | select(.name==\$NAME) | .browser_download_url')
+
+if [[ -z "\$release_url" || "\$release_url" == "null" ]]; then
+  echo "[!] dlc: failed to fetch release URL"
+  exit 1
+fi
+
+tmp_file="\${TARGET_FILE}.tmp"
+curl -fsSL "\$release_url" -o "\$tmp_file"
+
+old_hash="NONE"
+[[ -f "\$TARGET_FILE" ]] && old_hash=\$(sha256sum "\$TARGET_FILE" | awk '{print \$1}')
+new_hash=\$(sha256sum "\$tmp_file" | awk '{print \$1}')
+
+if [[ "\$old_hash" == "\$new_hash" ]]; then
+  echo "[=] dlc: no changes (\$new_hash)"
+  rm -f "\$tmp_file"
+else
+  mv -f "\$tmp_file" "\$TARGET_FILE"
+  echo "[+] dlc: updated \$old_hash -> \$new_hash"
+  ANY_UPDATED=1
+fi
+
+RELOAD_CMD="\${GEO_NR_RELOAD_CMD:-}"
+if [[ -n "\$RELOAD_CMD" && \$ANY_UPDATED -eq 1 ]]; then
+  echo "[*] Running reload command..."
+  if bash -lc "\$RELOAD_CMD"; then
+    echo "[✓] Reload command succeeded"
+  else
+    echo "[!] Reload command failed"
+  fi
+fi
+EOF
+
+  chmod +x /usr/local/bin/update-dlc.sh
+  log_success "Скрипт создан: /usr/local/bin/update-dlc.sh"
+fi
+
 # Create systemd service
 log_info "Настройка systemd service..."
 RELOAD_ENV_LINE=""
@@ -510,11 +662,48 @@ EOF
 
 log_success "Timer создан: /etc/systemd/system/geo-update.timer"
 
+if [[ "$INSTALL_DLC" == "1" ]]; then
+  log_info "Настройка systemd service для dlc..."
+  cat > /etc/systemd/system/dlc-update.service <<EOF
+[Unit]
+Description=Update domain-list-community dlc.dat
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/update-dlc.sh
+$RELOAD_ENV_LINE
+StandardOutput=journal
+StandardError=journal
+EOF
+
+  log_success "Service создан: /etc/systemd/system/dlc-update.service"
+
+  log_info "Настройка systemd timer для dlc..."
+  cat > /etc/systemd/system/dlc-update.timer <<EOF
+[Unit]
+Description=Weekly update for dlc.dat
+
+[Timer]
+OnCalendar=$DLC_UPDATE_DAY *-*-* $DLC_UPDATE_TIME:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
+  log_success "Timer создан: /etc/systemd/system/dlc-update.timer"
+fi
+
 # Enable and start timer
 log_info "Активация таймера..."
 systemctl daemon-reload
 systemctl enable geo-update.timer
 systemctl start geo-update.timer
+if [[ "$INSTALL_DLC" == "1" ]]; then
+  systemctl enable dlc-update.timer
+  systemctl start dlc-update.timer
+fi
 
 log_success "Таймер активирован"
 
@@ -522,6 +711,9 @@ if [[ -n "$DOCKER_COMPOSE_PATH" ]]; then
   log_info "Проверка docker-compose volumes..."
   ensure_compose_volume "$DOCKER_COMPOSE_PATH" "$DOCKER_COMPOSE_SERVICE" "$OUT_FILE" "$GEO_CONTAINER_PATH" "geo-no-russia"
   ensure_compose_volume "$DOCKER_COMPOSE_PATH" "$DOCKER_COMPOSE_SERVICE" "$ALLOW_FILE" "$ALLOW_CONTAINER_PATH" "allow-domains"
+  if [[ "$INSTALL_DLC" == "1" && -n "$DLC_CONTAINER_PATH" ]]; then
+    ensure_compose_volume "$DOCKER_COMPOSE_PATH" "$DOCKER_COMPOSE_SERVICE" "$DLC_FILE" "$DLC_CONTAINER_PATH" "dlc"
+  fi
 fi
 
 if [[ $RESTART_AFTER_INSTALL == "1" ]]; then
@@ -591,8 +783,19 @@ if command -v strings &>/dev/null; then
 else
   echo "  (для вывода списка групп установите пакет binutils: команда strings)"
 fi
+if [[ "$INSTALL_DLC" == "1" ]]; then
+  DLC_BASENAME=$(basename "$DLC_FILE")
+  echo
+  echo "  domain-list-community dlc.dat: $DLC_FILE"
+  echo "  Пример правила: \"domain\": [\"ext:${DLC_BASENAME}:google\"]"
+  echo "  Обновление выполняется: systemctl list-timers dlc-update.timer"
+fi
 echo
 
 # Show next run time
 NEXT_RUN=$(systemctl list-timers geo-update.timer --no-pager | grep geo-update.timer | awk '{print $1, $2, $3}')
 log_info "Следующее обновление: $NEXT_RUN"
+if [[ "$INSTALL_DLC" == "1" ]]; then
+  DLC_NEXT_RUN=$(systemctl list-timers dlc-update.timer --no-pager | grep dlc-update.timer | awk '{print $1, $2, $3}')
+  log_info "Следующее обновление dlc: $DLC_NEXT_RUN"
+fi

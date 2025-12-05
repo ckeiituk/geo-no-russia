@@ -23,6 +23,7 @@ log_info "Удаление geo-no-russia updater (systemd и скрипты)"
 # Try to detect data file path from update script
 OUT_FILE_PATH=""
 ALLOW_FILE_PATH=""
+DLC_FILE_PATH=""
 if [[ -f /usr/local/bin/update-geo-no-russia.sh ]]; then
   OUT_FILE_LINE=$(grep -E '^OUT_FILE=' /usr/local/bin/update-geo-no-russia.sh | head -n1 || true)
   if [[ -n "${OUT_FILE_LINE:-}" ]]; then
@@ -33,6 +34,12 @@ if [[ -f /usr/local/bin/update-geo-no-russia.sh ]]; then
     ALLOW_FILE_PATH=${ALLOW_FILE_LINE#ALLOW_FILE=}
   fi
 fi
+if [[ -f /usr/local/bin/update-dlc.sh ]]; then
+  DLC_FILE_LINE=$(grep -E '^TARGET_FILE=' /usr/local/bin/update-dlc.sh | head -n1 || true)
+  if [[ -n "${DLC_FILE_LINE:-}" ]]; then
+    DLC_FILE_PATH=${DLC_FILE_LINE#TARGET_FILE=}
+  fi
+fi
 
 # Fallback to стандартного пути, если скрипт обновления уже удалён
 if [[ -z "${OUT_FILE_PATH:-}" && -f /opt/remnanode/geo-no-russia.dat ]]; then
@@ -41,19 +48,27 @@ fi
 if [[ -z "${ALLOW_FILE_PATH:-}" && -f /opt/remnanode/allow-domains-geosite.dat ]]; then
   ALLOW_FILE_PATH="/opt/remnanode/allow-domains-geosite.dat"
 fi
+if [[ -z "${DLC_FILE_PATH:-}" && -f /opt/remnanode/dlc.dat ]]; then
+  DLC_FILE_PATH="/opt/remnanode/dlc.dat"
+fi
 
 log_info "Остановка таймера и сервиса (если запущены)..."
 systemctl stop geo-update.timer geo-update.service 2>/dev/null || true
+systemctl stop dlc-update.timer dlc-update.service 2>/dev/null || true
 
 log_info "Отключение таймера..."
 systemctl disable geo-update.timer 2>/dev/null || true
+systemctl disable dlc-update.timer 2>/dev/null || true
 
 log_info "Удаление systemd unit файлов..."
 rm -f /etc/systemd/system/geo-update.timer
 rm -f /etc/systemd/system/geo-update.service
+rm -f /etc/systemd/system/dlc-update.timer
+rm -f /etc/systemd/system/dlc-update.service
 
 log_info "Удаление скрипта обновления..."
 rm -f /usr/local/bin/update-geo-no-russia.sh
+rm -f /usr/local/bin/update-dlc.sh
 
 log_info "Перезагрузка конфигурации systemd..."
 systemctl daemon-reload
@@ -68,6 +83,19 @@ if [[ -n "${OUT_FILE_PATH:-}" && -f "$OUT_FILE_PATH" ]]; then
     log_success "Файл удалён: $OUT_FILE_PATH"
   else
     log_warn "Файл базы оставлен: $OUT_FILE_PATH"
+  fi
+fi
+
+if [[ -n "${DLC_FILE_PATH:-}" && -f "$DLC_FILE_PATH" ]]; then
+  echo
+  log_info "Обнаружен файл dlc.dat: $DLC_FILE_PATH"
+  read -p "Удалить файл dlc.dat? [y/N]: " ANSWER </dev/tty || ANSWER=""
+  ANSWER=${ANSWER:-N}
+  if [[ "$ANSWER" =~ ^[Yy]$ ]]; then
+    rm -f "$DLC_FILE_PATH"
+    log_success "Файл удалён: $DLC_FILE_PATH"
+  else
+    log_warn "Файл dlc.dat оставлен: $DLC_FILE_PATH"
   fi
 fi
 
@@ -89,4 +117,6 @@ log_success "Удаление завершено."
 echo
 echo -e "${BLUE}Проверьте состояние (опционально):${NC}"
 echo "  systemctl list-timers | grep geo-update || true"
+echo "  systemctl list-timers | grep dlc-update || true"
 echo "  systemctl status geo-update.service || true"
+echo "  systemctl status dlc-update.service || true"
